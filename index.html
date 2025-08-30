@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>원격 제어 패널</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f5f5f5; padding: 20px; }
+    h1 { color: #333; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    button {
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      background: #4caf50;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    button:hover { background: #388e3c; }
+    .card {
+      margin-top: 20px;
+      padding: 10px;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    #current, #history {
+      max-height: 250px;
+      overflow-y: auto;
+      font-size: 14px;
+    }
+    img { border-radius: 5px; margin-top: 5px; }
+  </style>
+</head>
+<body>
+  <h1>🖥️ 원격 제어 패널</h1>
+  <div class="grid">
+    <button onclick="sendCommand('!정보')">PC 정보</button>
+    <button onclick="sendCommand('!상태')">상태 확인</button>
+    <button onclick="sendCommand('!가동시간')">가동시간</button>
+    <button onclick="sendCommand('!설치된프로그램')">설치된 프로그램</button>
+    <button onclick="sendCommand('!위치')">위치 확인</button>
+    <button onclick="sendCommand('!클립보드읽기')">클립보드</button>
+    <button onclick="sendCommand('!pc종료')">PC 종료</button>
+    <button onclick="sendCommand('!pc재시작')">PC 재시작</button>
+    <button onclick="sendCommand('!프로세스종료 메모장')">프로세스 종료</button>
+    <button onclick="showAlertDialog()">알림창</button>
+    <button onclick="sendCommand('!캡처')">화면 캡처</button>
+    <button onclick="sendCommand('!속도측정')">속도 측정</button>
+    <button onclick="sendCommand('!다운로드 C:/Users/test/file.txt')">파일 다운로드</button>
+    <button onclick="sendCommand('!자동시작등록')">자동 시작 등록</button>
+    <button onclick="sendCommand('!자동시작해제')">자동 시작 해제</button>
+    <button style="background:#e53935;" onclick="sendCommand('!종료')">🛑 클라이언트 종료</button>
+  </div>
+
+  <!-- 현재 상태 -->
+  <div class="card">
+    <h2>📡 현재 상태</h2>
+    <div id="current"></div>
+  </div>
+
+  <!-- 실행 기록 -->
+  <div class="card">
+    <h2>📜 실행 기록 (최근 10개)</h2>
+    <div id="history"></div>
+  </div>
+
+  <script>
+    // 🔑 Firebase 설정
+    const firebaseConfig = {
+      apiKey: "AIzaSyAaDqg39OROcz22DnZntmwamJhO5dqwt7w",
+      authDomain: "site-menu-150a1.firebaseapp.com",
+      projectId: "site-menu-150a1",
+    };
+
+    // Firebase 초기화
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // ✅ 컬렉션 / 문서 참조
+    const commandsRef = db.collection("commands").doc("pc1");
+    const logsRef = db.collection("logs");
+
+    // ✅ 명령 전송
+    async function sendCommand(cmd) {
+      const now = new Date();
+      const logDoc = await logsRef.add({
+        command: cmd,
+        result: "(대기 중)",
+        timestamp: now
+      });
+
+      // logs 문서 ID를 commands에 같이 저장
+      await commandsRef.set({
+        command: cmd,
+        result: "",
+        logId: logDoc.id,
+        timestamp: now
+      }, { merge: true });
+    }
+
+    // ✅ 알림창 다이얼로그
+    function showAlertDialog() {
+      const title = prompt("알림창 제목을 입력하세요:");
+      if (!title) return;
+      const content = prompt("알림창 내용을 입력하세요:");
+      if (!content) return;
+      sendCommand(`!알림창 ${title} ${content}`);
+    }
+
+    // ✅ 현재 상태 (pc1 문서 구독)
+    commandsRef.onSnapshot(async doc => {
+      if (doc.exists) {
+        const data = doc.data();
+        document.getElementById("current").innerHTML = `
+          <p><b>명령:</b> ${data.command || "(없음)"}</p>
+          <p><b>결과:</b> ${data.result || "(대기 중)"}</p>
+          <p><b>시간:</b> ${data.timestamp ? data.timestamp.toDate() : "-"}</p>
+        `;
+
+        // 🔄 결과가 나오면 해당 log 문서도 업데이트
+        if (data.logId && data.result) {
+          logsRef.doc(data.logId).update({
+            result: data.result
+          });
+        }
+      }
+    });
+
+    // ✅ 최근 로그 (최근 10개)
+    logsRef.orderBy("timestamp", "desc").limit(10)
+      .onSnapshot(snapshot => {
+        let logsHTML = "";
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          let res = data.result;
+
+          // 캡처된 이미지 처리
+          if (typeof res === "string" && res.includes("http") && res.includes("capture")) {
+            res = `<a href="${res}" target="_blank"><img src="${res}" width="200"></a>`;
+          }
+
+          logsHTML += `
+            <p>🕒 ${data.timestamp.toDate().toLocaleString()}<br>
+            📌 명령: ${data.command}<br>
+            ✅ 결과: ${res}</p>
+            <hr>`;
+        });
+        document.getElementById("history").innerHTML = logsHTML;
+      });
+  </script>
+</body>
+</html>
